@@ -221,7 +221,10 @@ class context_extractor():
             """
             1- Using the index of current chunk, we will find out previouse two chunks & next two chunks.
             2- iterating_chunk = 0
-            3- Inside the loop, for every text chunk, update iterating_chunk = ICC - 
+            3- Inside the loop, for every text chunk, update iterating_chunk = ICC - count 
+            4- When loop reaches to the previous chunk, count =+1 (means one previous chunk checked) & check its content type, if text then extract chunk. 
+            5- If content_type is "title", then we will add count =+ 1 again, because we only want to extract main heading as para before that heading will
+            be most likely irrelevant. 
             """
             # Previous chunks of current page
             count = 1
@@ -231,14 +234,18 @@ class context_extractor():
                     count =+ 1
                     if unit_of_CP["content_type"] == "text" and count < 3:
                         previous_chunk_of_CP = unit_of_CP.get("raw_content","")
-                        list_chunks_for_context_extraction.append(previous_chunk_of_CP)                
+                        list_chunks_for_context_extraction.append(previous_chunk_of_CP)
+                    elif unit_of_CP["content_type"] == "title" and count < 3:
+                        count =+ 1
+                        previous_chunk_of_CP = unit_of_CP.get("raw_content","")
+                        list_chunks_for_context_extraction.append(previous_chunk_of_CP)      
                     else:
                         break
             # Next chunks of current page
             count = 1
             index_next_chunk_of_CP = index_of_current_chunk + count
             for unit_of_CP in units_of_current_page:
-                if unit_of_CP["index_on_page"] == index_previous_chunk_of_CP:
+                if unit_of_CP["index_on_page"] == index_next_chunk_of_CP:
                     count =+ 1
                     if unit_of_CP["content_type"] == "text" and count < 3:
                         next_chunk_of_CP = unit_of_CP.get("raw_content","")
