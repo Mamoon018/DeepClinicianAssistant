@@ -1,47 +1,55 @@
 
 
 from dataclasses import dataclass
-
-from src.document_parsing.sample_data import sample_multi_model_chunks_with_llm_description, textual_knowledge_units
-from utils import doc_id, document_title, Milvus_client
-
-from pymilvus import DataType, Function, FunctionType
+import dataclasses
+from src.document_parsing.sample_data import sample_multi_model_chunks_with_llm_description, sample_textual_knowledge_units
+from utils import doc_id, document_title, Milvus_client, openai_embeddings
+from dataclasses import dataclass
+from pymilvus import DataType
+from typing import Any
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
 perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # Here is the document ID
 doc_id_generated = doc_id()
 doc_title = document_title()
 
-
-
+    # Lets define the dataclass to pass the parameters to processor_storage class
+@dataclass
+class Config:
+        
+        """
+        This class contains the parameters that can be very likely change to test program with different
+        parameters.
+        This class requires to keep the flexibility with creation of collections so, we decided to provide
+        that through config_class rather than hard-coding everytime we need to make any changes.
+ 
+        """ 
+        textual_collection_VDB: str = "Textual_VDB_collection"
+        multi_model_collection_VDB: str = "Multi_modal_VDB_collection"
+ 
+ 
 class processor_storage():
     """
-    This class handles the tasks related to the storage of the data in vector & Graph databases.
-    
-    Below is the blueprint of the class:
-
-    Config class: (Check if required or not.)   ---> Can only confirm after initial implementation. If we come across storing configurable parameters then we can create a configdata class for them.
-    Main Class: (Finalize the class instances and object instances) ---> 
-    Input handler-1: (Finalize the format that we want to pass onto the formatter-1)
-    Input handler-2: (Finalize the format that we want to pass onto the formatter-2)
-    Formatter for IH-1: (Finalize the final format required to pass onto the textual Vector database)
-    Format for IH-2: (Finalize the final format required to pass onto the multi-mode Vector database)
-    Processor for storing data: (Finalize the process the we need to implement for storing data in Vector DB)
-    Output confirmation: (Finalize the confirmation required for the successful storage of the data)
+    This class handles the tasks related to the storage of the data in vector & Graph database.
 
     """
 
 
-    def __init__(self, multi_model_chunks_with_llm_description, textual_knowledge_units):
+    def __init__(self, multi_model_chunks_with_llm_description, textual_knowledge_units, config:Config = None):
 
         self.document_id = doc_id_generated
         self.docum_title = doc_title
         self.textual_units = textual_knowledge_units
         self.multi_model_units = multi_model_chunks_with_llm_description
+        self.config = config or Config()
+        self.client = None
+        self.embedding_function = None
+
 
     def __run_processor_storage__(self):
          
@@ -50,7 +58,7 @@ class processor_storage():
         ends with push data to vector database.           
         """
 
-        
+
         lists_of_units = [self.textual_units, self.multi_model_units]
         text_payload_insertion_list = []
         multi_model_payload_insertion_list = []
@@ -65,32 +73,52 @@ class processor_storage():
                   
                 if list_no == 1: 
                     current_item_no_textual += 1
-                    text_chunk_insertion_data = self.textual_chunk_payload_prep(
+                    text_chunk_insertion_data = self.chunk_payload_prep(
                         current_item=unit, 
                         current_item_number=current_item_no_textual
                     )
                     text_payload_insertion_list.append(text_chunk_insertion_data)
                 elif list_no == 2:
                     current_item_no_multimodal += 1
-                    multimodal_chunk_insertion_data = self.textual_chunk_payload_prep(
+                    multimodal_chunk_insertion_data = self.chunk_payload_prep(
                         current_item= unit,
                         current_item_number=current_item_no_multimodal
                     )
                     multi_model_payload_insertion_list.append(multimodal_chunk_insertion_data)
         
-        return      text_payload_insertion_list, multi_model_payload_insertion_list
+        payloads = [text_payload_insertion_list, multi_model_payload_insertion_list]
+
+        # Add the vectors tot he payload 
+        for text_payloads in payloads[0]:
+           text_payloads_list = [text_payloads]
+           textual_vectorized_payload_insertion_list = self.generate_embeddings_for_payload_text(payloads_list=text_payloads_list)
+            
 
 
-                       
+        """
+        1) Provide the list of collections TEXT and MULTI-MODEL collections that we want to generate. (in-main)
+        2) Pass the payloads to the method to insert the data in the respective collections. (in-class method)
 
-                  
+        Design choice: It will allow us to create new collections without hard-coding the inner method. 
+        """
+
+        """
+        collections_to_be_generated = [self.config.textual_collection_VDB, self.config.multi_model_collection_VDB]
+        for collection in collections_to_be_generated:
+            coll_signal, coll_list = self.create_VDB_collection(content_collection_name=collection)
+        
+        for payload, collection_created in zip(payloads, collections_to_be_generated):
+            self.VDB_data_insertion_task(payloads=payload,collection=collection_created)
+        """
+                
+        return    textual_vectorized_payload_insertion_list
         
 
 
-    def textual_chunk_payload_prep(self,current_item,current_item_number):
+    def chunk_payload_prep(self,current_item,current_item_number):
 
         """
-        ##  Textual Units Handler   ##
+        ##  Prepares the payload which includes the content & metadata that needs to be pushed to Milvus database.   ##
         It takes the current_unit, and generates the document-id and chunk-id for it, and insert both in that along
         with the document title in order to prepare final payload of the textual units that can be stored in the
         Vector database. (Embeddings for the chunk will be generated separately)
@@ -131,43 +159,40 @@ class processor_storage():
             "doc_id": current_item["doc_id"],
             "chunk_id": current_item["chunk_id"],
             "raw_content": current_item["raw_content"],
-            "meta_data": metadata
+            "metadata": metadata
         }
 
         return self.chunk_insertion_data
     
-    def generate_embeddings_function(self,chunks_text_content:list):
+    def generate_embeddings_for_payload_text(self,payloads_list:list[dict]):
 
         """
-        It takes the list of text chunks of the textual_items, and passes it to the openai embedding models that generates the
-        vector embeddings of the chunks in a single api call, and then attach the generated vectors back to respective items of
-        textual_knowledge_units.
+        It calls the openai pre-trained model to generate the vector embeddings for the payload texts. It 
+        generates the high-dimensionality embeddings with dim of 1536.
+        It takes the text from the payload one by one, generate embeddings and then add vector embeddings back
+        to the payloads respectively.
 
         **Args:**
-                chunks_text_content (list): It is the list of the chunks text content that needs to be vectorized using embedding models.
+        payload_insertion_list (list[dict]): It is the list of payloads.
 
         **Returns:**
-                
+        vectorized_payloads_insertion_list  (list[dict]): It is the list of text payloads containing vector embeddings of content.
         """
+        # lets get the embedding model object
+        openai_embedding_model = openai_embeddings()
+        
+        vectorized_payloads_insertion_list = []
 
-        text_embedding_function = Function(
+        for payload in payloads_list:
+            content = [payload.get("raw_content","")]
+            dense_vectors = openai_embedding_model.encode_documents(content)
+            payload["Vectors"] = dense_vectors
+            vectorized_payloads_insertion_list.append(payload)
 
-            name= "openai_embedding",
-            function_type= FunctionType.TEXTEMBEDDING,
-            input_field_names= ["raw_content"],
-            output_field_names= ["Vectors"],
-
-            params= {
-                "provider": "openai",
-                "model_name": "text-embedding-3-small"
-            }
-
-        )
-
-        return text_embedding_function
+        return vectorized_payloads_insertion_list
 
 
-    def textual_VDB_collection(self):
+    def create_VDB_collection(self,content_collection_name:str):
         """
         It initializes the milvus client and defines the schema of the collection and load the collection using that 
         schema, also defines the indexing strategy for chunks vectors.
@@ -177,14 +202,11 @@ class processor_storage():
         """
 
         # Initialize milvus client
-        Client = Milvus_client()
+        self.client = Milvus_client()
         # Initialize the schema creation 
-        text_vectors_schema = Client.create_schema(
+        text_vectors_schema = self.client.create_schema(
                                                     auto_id = False,
-                                                    )                            
-
-        # Add embedding function to the schema
-        #text_vectors_schema.add_function(self.text_embedding_function)
+                                                    )                          
 
         # Fields of schema
         text_vectors_schema.add_field(
@@ -216,10 +238,11 @@ class processor_storage():
         For prioritising the high recall & high QPS, we will stick with HNSW approach which uses graph to map the 
         data, params (M, ef) can be tuned based on the outcome quality.
         """
+        
 
 
         # Indexing for vectors field is must - in order to perform vector search. Currently, we will stick with the
-        vector_index_params = Client.prepare_index_params()
+        vector_index_params = self.client.prepare_index_params()
         vector_index_params.add_index(
             field_name="Vectors",
             index_name= "dense_vectors_index",
@@ -232,27 +255,52 @@ class processor_storage():
             }
         )
 
+        
+        # Let's create/Load the collection
         collection_signal = None
-        list_of_collections = Client.list_collections()
-        if "Textual_collection_1" not in list_of_collections:
+        list_of_collections = self.client.list_collections()
+
+        if content_collection_name not in list_of_collections:
 
                 # Let's create the collection which we will use to store the data
-                Client.create_collection(
-                                            collection_name="Textual_collection_1",
-                                            schema= text_vectors_schema,
-                                            index_params= vector_index_params)
-                collection_signal = "Collection created"
+            self.client.create_collection(
+                collection_name=content_collection_name,
+                schema= text_vectors_schema,
+                index_params= vector_index_params)
+            collection_signal = "Collection created"
+        
 
         else:
-                    # confirmation of collection creation
-                collection_signal = Client.load_collection(
-                        collection_name="Textual_collection_1"
-                    )
-                collection_signal = "Collection loaded!"
-                
-        list_of_collections = Client.list_collections()
+            # confirmation of collection creation
+            self.client.load_collection(
+                collection_name=content_collection_name
+                )
+            collection_signal = "Collection loaded!"
+        
+        
+        list_of_collections = self.client.list_collections()
+
+        """
+        Client.drop_collection(
+            collection_name= "Textual_collection_2"
+        )
+        """
 
         return collection_signal, list_of_collections
+    
+    def VDB_data_insertion_task(self, payloads: Any = None, collection: Any = None):
+        """
+        This function takes the textual and multi-modal payloads and simply insert them into collections. 
+        """
+
+
+        collection_data = self.client.insert(
+            collection_name= collection,
+            data= payloads
+        )
+
+        return collection_data
+
 
 
 
@@ -260,12 +308,14 @@ class processor_storage():
 
 if __name__ == "__main__":
 
-    db_storage = processor_storage()
+    db_storage = processor_storage(
+        multi_model_chunks_with_llm_description=sample_multi_model_chunks_with_llm_description,
+        textual_knowledge_units= sample_textual_knowledge_units)
 
-    results = db_storage.__run__()
+    results = db_storage.__run_processor_storage__()
 
     print(results)
-    
+
 
     
 

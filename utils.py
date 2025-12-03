@@ -2,12 +2,13 @@
 import uuid
 from src.document_parsing.sample_data import combined_knowledge_units
 from pymilvus import MilvusClient
+from pymilvus import model
 import os
 
 
 milvus_api_key = os.getenv("MILVUS_API_KEY")
-
-
+openai_embedding_model_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY")
+openai_embedding_model_base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL")
 
 
                         ##  1-  Knowledge units splitter  ##
@@ -108,6 +109,23 @@ def Milvus_client():
                         )
 
     return Client
+
+## Lets define the openai embedding function
+def openai_embeddings():
+    """
+    It instatiate the openaiembedding model to further use it for generating dense vector embeddings for the 
+    content.
+    """
+    openai_ef = model.dense.OpenAIEmbeddingFunction(
+        model_name= 'text-embedding-3-small',
+        api_key= openai_embedding_model_api_key,
+        dimensions= 1536,
+        base_url= openai_embedding_model_base_url
+    )
+
+    return openai_ef
+
+
 
 if __name__ == "__main__":
 

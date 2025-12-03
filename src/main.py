@@ -27,14 +27,18 @@ if __name__ == "__main__":
     #multi_model_final_chunks = context_extraction.__run_context_extractor__()
 
     """ Module - 3: Chunk Payload Prep """
+
+
     content_processor_storage = processor_storage(
         multi_model_chunks_with_llm_description=sample_multi_model_chunks_with_llm_description,
         textual_knowledge_units= sample_textual_knowledge_units
-
                                                   )
-    text_payload_insertion_list, multi_model_payload_insertion_list = content_processor_storage.__run_processor_storage__()
     
+    #text_payload_insertion_list, multi_model_payload_insertion_list = content_processor_storage.__run_processor_storage__()
+
+    coll_signal, coll_list = content_processor_storage.__run_processor_storage__()
 
 
-    print(multi_model_payload_insertion_list)
+    print(coll_signal,coll_list)
+
 

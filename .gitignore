@@ -1,2 +1,4 @@
 # Environment variables
 .env
+# Openai configuration with Milvus for Embedding generation function
+milvus.yaml
