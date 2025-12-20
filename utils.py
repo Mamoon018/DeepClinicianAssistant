@@ -6,6 +6,7 @@ from pymilvus import model
 import tiktoken
 import array
 import os
+from perplexity import Perplexity
 
 
 milvus_api_key = os.getenv("MILVUS_API_KEY")
@@ -114,6 +115,16 @@ def Milvus_client():
 
 
 
+## Perplexity Client
+def perplexity_llm(api_key, retries):
+    client = Perplexity(api_key=api_key, 
+                            max_retries=retries, )
+    
+    return client
+
+
+
+
 ## Lets define the openai embedding function
 def openai_embeddings():
     """
@@ -128,6 +139,8 @@ def openai_embeddings():
     )
 
     return openai_ef
+
+
 
 
 
