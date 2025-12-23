@@ -152,6 +152,32 @@ class graphdb_processor():
         except perplexity.APIStatusError as e:
             print(f"API error: {e.status_code}")
 
+    def _parse_entities(self,match):
+        """
+        It parses the llm ouptut, and returns the transformed structured of entity nodes. 
+        """
+        return {
+                    "entity_type" : match.group(2),
+                    "properties": {
+                        "entity_name" : match.group(1),
+                        "entity_description" : match.group(3)
+                    }     
+                }
+    
+    def _parse_relationships(self,match):
+        """
+        It parses, and returns the transformed structure of relationship edges. 
+        """
+        return {
+                    "source": match.group(1),
+                    "target": match.group(2),
+                    "properties": {
+                        "description": match.group(3),
+                        "keywords": match.group(4),
+                        "category": match.group(5)
+                    }
+                }
+
     
 
     def entities_relationship_parsing(self):
@@ -171,61 +197,37 @@ class graphdb_processor():
         """
         llm_entity_relation_output = None
 
-        # lets parse the output
-
+        # Read the output
         with open("LLM_extraction_output.txt","r", encoding= "utf-8") as readLLMOutput:
             llm_entity_relation_output = readLLMOutput.read()
-
         llm_output_sectioned =  [ i.strip() for i in llm_entity_relation_output.split("##") ]
-        # lets define the lists to store the transformed output
+        
+        # Define the lists to store the transformed output
         entities = []
         relationships = []
         chunk_context_keywords = None
         
-        # lets define the regex pattern to check the 
-        pattern_entity = r'\("entity"<\|>"(.*?)"<\|>"(.*?)"<\|>"(.*?)"\)'
-        pattern_relationship = r'\(\s*["\']?relationship["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*\)'
-        context_relationship = r'\(\s*["\']?context\s+keywords["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*\)'
-
+        # Define the regex pattern to check the 
+        pattern_entity = re.compile('\("entity"<\|>"(.*?)"<\|>"(.*?)"<\|>"(.*?)"\)')
+        pattern_relationship = re.compile('\(\s*["\']?relationship["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*\)')
+        pattern_chunk_keywords = re.compile('\(\s*["\']?context\s+keywords["\']?\s*<\|>\s*["\']?(.*?)["\']?\s*\)')
 
         for record in llm_output_sectioned:
-            entity_match = re.search(pattern=pattern_entity,string= record)
-            relationship_match = re.search(pattern=pattern_relationship,string= record)
-            chunk_context_keyword_match = re.search(pattern=context_relationship, string=record)
-
-            if entity_match:
-                entity_node = {
-                    "entity_type" : entity_match.group(2),
-                    "properties": {
-                        "entity_name" : entity_match.group(1),
-                        "entity_description" : entity_match.group(3)
-                    }
-                    
-                }
-                entities.append(entity_node) 
-
-            elif chunk_context_keyword_match:
-                chunk_context_keywords =  chunk_context_keyword_match.group(1) 
-
-            elif relationship_match:
-                relationship_edges = {
-                    "source": relationship_match.group(1),
-                    "target": relationship_match.group(2),
-                    "properties": {
-                        "description": relationship_match.group(3),
-                        "keywords": relationship_match.group(4),
-                        "category": relationship_match.group(5)
-                    }
-                }
-                relationships.append(relationship_edges)
+            if entity_match:= pattern_entity.search(record):
+                entities.append(self._parse_entities(match=entity_match)) 
+            elif chunk_keywords_match:= pattern_chunk_keywords.search(record):
+                chunk_context_keywords =  chunk_keywords_match.group(1)
+            elif relationship_match:= pattern_relationship.search(record):
+                relationships.append(self._parse_relationships(match=relationship_match))
 
         # Adding context keywords to all the entities - in order to ground them in context of their chunk!
         for entity_node in entities:
                 entity_node["properties"]["chunk_context_keywords"] = chunk_context_keywords     
 
-
         return entities, relationships, chunk_context_keywords
-    
+
+
+    # Defining function for the creation of the knowledg graph
     def KG_builder(self,entity_nodes, relationship_edges, parent_entity_nodes):
         """
         It takes the entity_nodes and relationships_edges as an input and then push the data to the Neo4j to 
@@ -246,6 +248,8 @@ class graphdb_processor():
         parent_entity_nodes: It is the object that contains the details of parent entity which will be linked with all extracted entities.
 
         """
+
+
 
 
 
