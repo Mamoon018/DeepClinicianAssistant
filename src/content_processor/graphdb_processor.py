@@ -37,19 +37,22 @@ class graphdb_processor():
 
         # Get the multi-modal chunks
         milvus_chunks = self.multi_modal_info_extraction_for_KG()
-        print(f"Milvus chunks -->  {milvus_chunks}")
+        #print(f"Milvus chunks -->  {milvus_chunks}")
 
         #KG_entities, parent_entity_info = self.entities_generation_for_multimodal_chunks(milvus_extracted_data= milvus_chunks)
         #print(f"KG_entities --> {KG_entities}")
 
         entities, relationships = self.entities_relationship_parsing()
-        print(f"Parsed entities --> {entities}")
+        #print(f"Parsed entities --> {entities}")
 
         entities_with_id,relationships_with_id = self.parent_child_relationships(entity_nodes=entities, relationship_edges=relationships,
                                                   parent_entity_node=Parent_entity_info)
-        print(f" -- entities and relationships with IDs -- {entities_with_id}, {relationships_with_id}")
+        #print(f" -- entities and relationships with IDs -- {entities_with_id}, {relationships_with_id}")
 
-        return relationships_with_id, entities_with_id
+
+        KG_builder_output = self.knowledge_graph_builder(entity_nodes=entities_with_id[:2],relationship_edges= relationships_with_id[:2])
+
+        return print(KG_builder_output)
  
 
     def multi_modal_info_extraction_for_KG(self):
@@ -101,16 +104,18 @@ class graphdb_processor():
 
         # Compose the Parent entity info 
         content_of_chunk = milvus_extracted_data.get("raw_content",[])
+        id_of_chunk = milvus_extracted_data.get("chunk_id",[])
         meta_data_of_chunk = milvus_extracted_data.get("metadata",[])
         entity_summary_of_chunk = meta_data_of_chunk.get("entity_summary",[])
         for i in entity_summary_of_chunk:
-            Parent_entity_name = i.get("entity_name",[])
+            Parent_entity_name = i.get("entity_name",[])  # NEED TO FIX THE STRUCTURE OF ENTITY SUMMARY: It should not be list!!
             Parent_entity_type = i.get("entity_type",[])
 
         parent_entity_info:dict = {
             "parent_entity_name":Parent_entity_name, 
             "parent_entity_type": Parent_entity_type, 
-            "content": content_of_chunk
+            "content": content_of_chunk,
+            "id_of_chunk": id_of_chunk
             }
         
         # Extract entities using LLM
@@ -222,6 +227,7 @@ class graphdb_processor():
                 entities.append(self._parse_entities(match=entity_match)) 
             elif relationship_match:= pattern_relationship.search(record):
                 relationships.append(self._parse_relationships(match=relationship_match))
+
         
 
         return entities, relationships
@@ -273,6 +279,9 @@ class graphdb_processor():
         # Generate ID for entities
         for entity in entity_nodes:
             entity["entity_id"] = self._id_generator(name="entity")
+            # Add chunk ID for reference in entities and relationships
+            entity["properties"]["id_of_chunk"] = parent_entity_node["id_of_chunk"]
+
         
         # Add relationship between parent and child nodes in relationships
         for entity in entity_nodes:
@@ -282,10 +291,47 @@ class graphdb_processor():
         # Generate ID for relationships
         for relationship in relationship_edges:
             relationship["relaionship_id"] = self._id_generator(name="relationship")
-        
+
         return entity_nodes, relationship_edges
 
+    def knowledge_graph_builder(self, entity_nodes, relationship_edges):
+        """
+        It takes the entities and relationships and runs the cypher query to push them into the knowledge graph
+        of graph database. 
 
+        Building KG:
+        1- Get the entities_with_ids object. 
+        2- Create the variables that we need to pass onto the cypher query. (For Nodes & Properties)
+        3- Write a cypher query for entities.
+        4- SEPARATE FUNCTION Apply for loop, that takes each object (Nodes & relationships) and executes cypher query for it. 
+
+        **Args:**
+        entity_nodes (list[dict]): It is the list of entity nodes
+        relationships (list[dict]): It is the list of the relationships edges
+
+        **Returns:**
+        query_execution_confirmation (str): Confirmation about the execution of the query.
+
+        """
+
+        entity_cypher_query = []
+
+        for entity in entity_nodes:
+            # Entity variables
+            node_type = entity.get("entity_type",[])
+            node_id = entity.get("entity_id",[])
+
+            entity_cypher = f" MERGE ( n: {node_type} {{node_id : '{node_id}'}})"
+
+            # Entity Properties
+            properties = entity.get("properties",[])
+            entity_properties = ",".join([f"n.{key} = '{value}'" for key,value in properties.items()])
+
+            entity_cypher += f" ON CREATE SET {entity_properties} " 
+            entity_cypher_query.append(entity_cypher)
+
+
+        return entity_cypher_query
 
 
 

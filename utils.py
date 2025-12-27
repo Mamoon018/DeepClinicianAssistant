@@ -4,14 +4,21 @@ from src.document_parsing.sample_data import combined_knowledge_units, sample_te
 from pymilvus import MilvusClient
 from pymilvus import model
 import tiktoken
-import array
 import os
+from dotenv import load_dotenv
 from perplexity import Perplexity
+from neo4j import GraphDatabase
 from time import perf_counter
+
+load_dotenv()
 
 milvus_api_key = os.getenv("MILVUS_API_KEY")
 openai_embedding_model_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY")
 openai_embedding_model_base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+neo4j_uri = os.getenv("NEO4J_URI")
+neo4j_user_name = os.getenv("NEO4J_USERNAME")
+neo4j_password = os.getenv("NEO4J_PASSWORD")
+
 
 
                         ##  1-  Knowledge units splitter  ##
@@ -151,14 +158,24 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
+
 ## Latency measurement
-def starting_time(function_name):
-    return print(f"{function_name} started at time {perf_counter()}")
+def starting_time():
+    return perf_counter()
 
-def ending_time(function_name):
-    return print(f"{function_name} ended at time {perf_counter()}")
+def ending_time():
+    return perf_counter()
 
 
+## Neo4j Connection
+def neo4j_dbconnection():
+    """
+    It initializes the connection with neo4j instance.
+    """
+    auth_1 = (neo4j_user_name,neo4j_password)
+    graph_db_execs = GraphDatabase.driver(uri=neo4j_uri, auth=auth_1)
+
+    return graph_db_execs
 
 
 
