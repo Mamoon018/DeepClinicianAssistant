@@ -5,6 +5,7 @@ from utils import Milvus_client, perplexity_llm
 from src.document_parsing.sample_data import Parent_entity_info
 from src.content_processor.prompt import ENTITIES_GENERATOR_PROMPT
 from utils import doc_id, starting_time, ending_time
+from pymilvus import MilvusException
 import os 
 import perplexity
 import re
@@ -72,22 +73,27 @@ class graphdb_processor():
         1- Entity type : Person, Event, Organization, role, device, disease, inst
 
         """
+        try:
 
-        # lets extract the multi-modal chunks from Milvus VDB
-        # For Sampling Purpose, we will use saved extracted data.
-        Milvus_extracted_multimodal = Milvus_extracted_multimodal_chunks
-        """
-        self.milv_client = Milvus_client()
+            # lets extract the multi-modal chunks from Milvus VDB
+            # For Sampling Purpose, we will use saved extracted data.
+            Milvus_extracted_multimodal = Milvus_extracted_multimodal_chunks
+            """
+            self.milv_client = Milvus_client()
 
-        multi_model_milvus_extracted_chunks = self.milv_client.query(
-            collection_name= "Multi_modal_VDB_collection",
-            output_fields=["chunk_id", "doc_id", "raw_content", "metadata"],
-            limit = 2
-        )
-        """
-        
+            multi_model_milvus_extracted_chunks = self.milv_client.query(
+                collection_name= "Multi_modal_VDB_collection",
+                output_fields=["chunk_id", "doc_id", "raw_content", "metadata"],
+                limit = 2
+            )
+            """
+            
 
-        return Milvus_extracted_multimodal
+            return Milvus_extracted_multimodal
+
+        except MilvusException as e:
+            raise(f"Error occurred in Milvus Query chunk extraction operation due to {e}") from e 
+
     
     def entities_generation_for_multimodal_chunks(self,milvus_extracted_data):
 

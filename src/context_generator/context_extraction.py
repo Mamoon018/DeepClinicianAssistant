@@ -34,29 +34,40 @@ class Context_Extractor():
         self.multi_model_units_with_contextual_chunks = None
 
     def __run_context_extractor__(self) -> list[dict]:
+        
+        """
+        It is the main function which calls the multi_modal_extractor method and information_generation_processor
+        to execute context extraction along and multimodal content feeding to llm respectively to get the 
+        description for textual version of the underneath content. 
+        
+        """
 
-        # multi model units containing field of conrextual_chunks_text
-        self.multi_model_units_with_contextual_chunks = []
+        try:
+            # multi model units containing field of conrextual_chunks_text
+            self.multi_model_units_with_contextual_chunks = []
 
-        for unit in self.multi_model_units:
-            if "table_image_path" not in unit:
-                continue
-            context_chunks_text = self.multi_model_extractor(current_multi_model_unit=unit)
-            unit["contextual_text"] = context_chunks_text
-            self.multi_model_units_with_contextual_chunks.append(unit)
+            for unit in self.multi_model_units:
+                if "table_image_path" not in unit:
+                    continue
+                context_chunks_text = self.multi_model_extractor(current_multi_model_unit=unit)
+                unit["contextual_text"] = context_chunks_text
+                self.multi_model_units_with_contextual_chunks.append(unit)
 
-        # multi model units with llm generated description
-        multi_model_units_with_textual_description = []
-        for multi_model_context_unit in self.multi_model_units_with_contextual_chunks: 
-            multi_model_description, entity_summary = self.Information_generation_processor(
-                multi_model_chunks_with_contextual_texts=multi_model_context_unit
-                )
-            
-            multi_model_context_unit["raw_content"] = multi_model_description
-            multi_model_context_unit["entity_summary"] = entity_summary
-            multi_model_units_with_textual_description.append(multi_model_context_unit)
+            # multi model units with llm generated description
+            multi_model_units_with_textual_description = []
+            for multi_model_context_unit in self.multi_model_units_with_contextual_chunks: 
+                multi_model_description, entity_summary = self.Information_generation_processor(
+                    multi_model_chunks_with_contextual_texts=multi_model_context_unit
+                    )
+                
+                multi_model_context_unit["raw_content"] = multi_model_description
+                multi_model_context_unit["entity_summary"] = entity_summary
+                multi_model_units_with_textual_description.append(multi_model_context_unit)
 
-        return multi_model_units_with_textual_description
+            return multi_model_units_with_textual_description
+        
+        except Exception as e:
+            raise (f"Error occurred in run_context_extractor due to {e}") from e
 
     
     def multi_model_extractor(self,current_multi_model_unit:dict):
@@ -64,7 +75,7 @@ class Context_Extractor():
         It takes the current unit, and fetches its placement details to identify the surrouding chunks in the documents and then 
         place them in the chunks for context extraction list.
 
-        Here is the workflow:
+        Context extractor workflow:
         1- Find out the page of current chunk. Using that, find out previous page and next page. (Done)
         2- Access all chunks of current page, extract their index numbers and store in a list in their hierarchical order. (Done)
         3- Access all chunks of the next page, and of the previous page. Extract their index numbers and store separately. (Done)
@@ -75,64 +86,66 @@ class Context_Extractor():
             (c) Fetch the previous two chunks and next two chunks from the units (Done)
             (d) Fetch text from the shortlisted surrounding chunks using chunk-context-window
         
-        Detect source type --> Source Handler --> Windowing --> Extract --> Truncate
                 
         """
+        try: 
+            # Input variables
+            all_knowledge_units = self.all_knowledge_units
+            current_item = current_multi_model_unit
 
-        # Input variables
-        all_knowledge_units = self.all_knowledge_units
-        current_item = current_multi_model_unit
+            # As it is list of chunk because of figure & caption unit so, we need to find out only figure unit as reference for placement of current chunk
+            unit_of_figure = None
+            # Placement details of the current chunk
+            #for unit in current_item:
+            #    if "table_image_path" in unit:
+            page_of_current_unit = current_item.get("page_no.","")
+            page_index_of_current_unit = current_item.get("index_on_page","")
+            content_of_current_unit = current_item.get("table_image_path","")
+            unit_of_figure = current_item
+            
+            surrounding_pages_units = []
 
-        # As it is list of chunk because of figure & caption unit so, we need to find out only figure unit as reference for placement of current chunk
-        unit_of_figure = None
-        # Placement details of the current chunk
-        #for unit in current_item:
-        #    if "table_image_path" in unit:
-        page_of_current_unit = current_item.get("page_no.","")
-        page_index_of_current_unit = current_item.get("index_on_page","")
-        content_of_current_unit = current_item.get("table_image_path","")
-        unit_of_figure = current_item
+
+            # Page & Next page 
+            previous_page = page_of_current_unit - 1
+            next_page = page_of_current_unit + 1
+            pages_relvant_for_context = [previous_page,page_of_current_unit,next_page]
+            # All the chunks from previous page, current page, and next page (In this hierarchical order)
+            for page in pages_relvant_for_context:
+                for unit in combined_knowledge_units:
+                    if unit.get("page_no.") == page:
+                        surrounding_pages_units.append(unit)
+
+            # Index of the current chunk in the list of surrounding chunks
+            chunk_window = 2
+            index_of_current_unit = surrounding_pages_units.index(unit_of_figure)
+            start_index = max(0,index_of_current_unit - chunk_window)
+            end_index = min(len(surrounding_pages_units), index_of_current_unit + chunk_window + 1)
+            
+            # Previous two chunks
+            range_of_surrounding_chunks = list(range(start_index, end_index))
+            list_of_context_chunks = [
+                surrounding_pages_units[i] 
+                for i in range_of_surrounding_chunks 
+                if i != index_of_current_unit
+                                    ]
+
+            """
+            Imp Note: For multi-model content context extraction, we do not need to store previous & next chunks separately. It is because
+            placement of image does not break the continuity of the text chunks, it just enhances the semantic meaning of it. 
+            """
+            # Content out of chunks
+            context_chunks_text = []
+            for lcc in list_of_context_chunks:
+                if "raw_content" in lcc:
+                    context_chunks_text.append(lcc.get("raw_content",""))
+                if "table_caption" in lcc:
+                    context_chunks_text.append(lcc.get("table_caption",""))
+
+            return context_chunks_text
         
-        surrounding_pages_units = []
-
-
-        # Page & Next page 
-        previous_page = page_of_current_unit - 1
-        next_page = page_of_current_unit + 1
-        pages_relvant_for_context = [previous_page,page_of_current_unit,next_page]
-        # All the chunks from previous page, current page, and next page (In this hierarchical order)
-        for page in pages_relvant_for_context:
-            for unit in combined_knowledge_units:
-                if unit.get("page_no.") == page:
-                    surrounding_pages_units.append(unit)
-
-        # Index of the current chunk in the list of surrounding chunks
-        chunk_window = 2
-        index_of_current_unit = surrounding_pages_units.index(unit_of_figure)
-        start_index = max(0,index_of_current_unit - chunk_window)
-        end_index = min(len(surrounding_pages_units), index_of_current_unit + chunk_window + 1)
-        
-        # Previous two chunks
-        range_of_surrounding_chunks = list(range(start_index, end_index))
-        list_of_context_chunks = [
-            surrounding_pages_units[i] 
-            for i in range_of_surrounding_chunks 
-            if i != index_of_current_unit
-                                  ]
-
-        """
-        Imp Note: For multi-model content context extraction, we do not need to store previous & next chunks separately. It is because
-        placement of image does not break the continuity of the text chunks, it just enhances the semantic meaning of it. 
-        """
-        # Content out of chunks
-        context_chunks_text = []
-        for lcc in list_of_context_chunks:
-            if "raw_content" in lcc:
-                context_chunks_text.append(lcc.get("raw_content",""))
-            if "table_caption" in lcc:
-                context_chunks_text.append(lcc.get("table_caption",""))
-
-        return context_chunks_text
+        except Exception as e:
+            raise RuntimeError(f"multi_model_extractor failed due to : {e}") from e 
 
 
     def Information_generation_processor(self, multi_model_chunks_with_contextual_texts:dict):
@@ -222,11 +235,14 @@ class Context_Extractor():
 
             return table_description, entity_summary
         except perplexity.BadRequestError as e:
-            print(f"Invalid request parameters: {e}")
+            print(f"Invalid request parameters for perplexity")
+            raise(f"error occurred in information_generation_processor due to {e}") from e
         except perplexity.RateLimitError as e:
-            print("Rate limit exceeded, please retry later")
+            print("Rate limit exceeded for perplexity")
+            raise(f"error occurred in information_generation_processor due to {e}") from e
         except perplexity.APIStatusError as e:
             print(f"API error: {e.status_code}")
+            raise(f"error occurred in information_generation_processor due to {e}") from e
 
 
 
