@@ -187,7 +187,7 @@ def neo4j_dbconnection():
         return graph_db_execs
 
     except (ServiceUnavailable, AuthError) as e:
-        raise RuntimeError(f"Neo4j connection error ocurred {e}") from e
+        raise RuntimeError(f"Neo4j connection could not be verified {e}") from e
 
 
 

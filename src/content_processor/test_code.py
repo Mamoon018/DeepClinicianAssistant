@@ -22,8 +22,8 @@ from utils import neo4j_dbconnection, neo4j_uri
 ## Testing 
 if __name__ == "__main__":
 
-    with neo4j_dbconnection() as driver:            
-            driver.verify_connectivity()
-            print("Connection successfully created!")
+    neo4j_dbconnection()
+    
 
     #print(type(neo4j_uri))
+

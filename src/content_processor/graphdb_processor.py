@@ -1,7 +1,7 @@
 
 
 from src.document_parsing.sample_data import sample_textual_vectorized_payload_insertion_list, sample_multi_modal_vectorized_payload_insertion_list, Milvus_extracted_multimodal_chunks
-from utils import Milvus_client, perplexity_llm
+from utils import Milvus_client, perplexity_llm, neo4j_dbconnection
 from src.document_parsing.sample_data import Parent_entity_info
 from src.content_processor.prompt import ENTITIES_GENERATOR_PROMPT
 from utils import doc_id, starting_time, ending_time
@@ -51,9 +51,11 @@ class graphdb_processor():
             #print(f" -- entities and relationships with IDs -- {entities_with_id}, {relationships_with_id}")
 
 
-            KG_builder_query = self.knowledge_graph_builder(entity_nodes=entities_with_id,relationship_edges= relationships_with_id[:2])
+            KG_entity_query, KG_relationship_query  = self.knowledge_graph_query_generator(entity_nodes=entities_with_id,relationship_edges= relationships_with_id)
 
-            return print(KG_builder_query)
+            #final_kg_overview = self.cypher_query_executor(queries_for_entities=KG_entity_query, queries_for_relationships= KG_relationship_query)
+
+            return print(f"Here are the parsed relationships {KG_entity_query}")
         
         except Exception as e:
             raise(f"error occurred in __run__graphdb_processor__ due to {e}") from e 
@@ -78,7 +80,7 @@ class graphdb_processor():
         """
         try:
 
-            # lets extract the multi-modal chunks from Milvus VDB
+            # Extract the multi-modal chunks from Milvus VDB
             # For Sampling Purpose, we will use saved extracted data.
             Milvus_extracted_multimodal = Milvus_extracted_multimodal_chunks
             """
@@ -259,8 +261,8 @@ class graphdb_processor():
 
 
         relationship_edge = {
-                    "source": entity["properties"]["entity_name"],
-                    "target": child_entity,
+                    "source": child_entity,
+                    "target": parent_entity,
                     "properties": {
                                     "description": f"{child_entity} is child-entity that belongs to parent-entity {parent_entity}", 
                                     "category": "Main-theme"
@@ -273,7 +275,7 @@ class graphdb_processor():
 
 
 
-    # Define function for the adding IDs into extracted entities and relationships
+    # Function for the adding IDs into extracted entities and relationships
     def parent_child_relationships(self,entity_nodes, relationship_edges, parent_entity_node):
         """
         1- It assigns IDs to entity_nodes and relationship_edges. 
@@ -285,29 +287,31 @@ class graphdb_processor():
         parent_entity_node (dict): It is the details of the parent entity from which all entities & relationships have been extracted.
         
         """
+        entities_with_ids = []
 
         # Generate ID for entities
         for entity in entity_nodes:
             entity["entity_id"] = self._id_generator(name="entity")
             # Add chunk ID for reference in entities and relationships
             entity["properties"]["id_of_chunk"] = parent_entity_node["id_of_chunk"]
+            entities_with_ids.append(entity)
 
-        
+        relationships_with_ids = relationship_edges
         # Add relationship between parent and child nodes in relationships
         for entity in entity_nodes:
             additional_edge = self._relationship_generator(entity=entity, parent_entity=Parent_entity_info)
-            relationship_edges.append(additional_edge)
+            relationships_with_ids.append(additional_edge)
 
         # Generate ID for relationships
-        for relationship in relationship_edges:
+        for relationship in relationships_with_ids:
             relationship["relaionship_id"] = self._id_generator(name="relationship")
 
-        return entity_nodes, relationship_edges
+        return entities_with_ids, relationships_with_ids
 
 
 
-
-    def knowledge_graph_builder(self, entity_nodes, relationship_edges):
+    # Cypher Query generator
+    def knowledge_graph_query_generator(self, entity_nodes, relationship_edges):
         """
         It takes the entities and relationships and runs the cypher query to push them into the knowledge graph
         of graph database. 
@@ -359,9 +363,9 @@ class graphdb_processor():
                 Query format:
                 MATCH (s:source {node_id: entity_id})
                 MATCH (t:target {node_id: entity_id})
-                CREATE (s)-[: BELONGS_TO ] -> (t)
+                CREATE (s)-[: BELONGS_TO ]->(t)
                 """
-
+# Error because Parent node is not present in the entity list so, cannot extract its id.
                 source_node = relationship.get("source",[]).replace("#","").replace(" ","").replace(".","")
                 target_node = relationship.get("target",[]).replace("#","").replace(" ","").replace(".","")
                 relationship_properties = relationship["properties"]
@@ -372,11 +376,62 @@ class graphdb_processor():
 
                 relationship_cypher = f"MATCH (s:{source_node} {{node_id:'{source_node_id}'}}) MATCH (t:{target_node} {{node_id:'{target_node_id}'}}) MERGE (s)-[:BELONGS_TO {{{relationship_properties_extr}}}]->(t)"            
                 relationship_cypher_query.append(relationship_cypher)
+            
+            # write query
 
-            return relationship_cypher_query
+
+            return entity_cypher_query, relationship_cypher_query
         
         except Exception as e:
             raise RuntimeError(f"Error occurred in knowledge graph buildwer due to {e}") from e 
+
+
+    # Cypher query executor
+    def cypher_query_executor(self, queries_for_entities:list, queries_for_relationships:list):
+        """
+        It takes the entities generation and relationships generator cypher queries and executes the queries 
+        using neo4j Graph database. 
+
+        **Args:**
+        queries_for_entities (list): It is the list of entity generation queries for all extracted entities.
+        queries_for_relationships (list): It is the list of relationship generation queries between extracted entities.
+
+        **Return:**
+        confirmation about execution of cypher query.
+
+        Plan of Action:
+        1-  Get the neo4j instance initializer
+        2- Execute the queries for entities to generate entities in knowledge graph
+        3- Execute the queries for relationships to create relationships between entities of knowledge graph
+        
+        """
+
+        # Neo4j initializer
+        neo4j_db = neo4j_dbconnection()
+
+        # list of nodes created
+        nodes_of_KG = []
+
+        # Execute the query for entity generation in knowledge graph
+        for query in queries_for_entities:
+            execution_summary = neo4j_db.execute_query(query_=query, database_="neo4j").summary
+
+            nodes_created = execution_summary.counters.nodes_created
+            nodes_of_KG.append(nodes_created)
+        
+        # list of relationships created 
+        relationships_of_KG = []
+        # Execute query for relationship generation between entities in knowledge graph
+        for query in queries_for_relationships:
+            execution_summary = neo4j_db.execute_query(query_=query, database_="neo4j").summary
+
+            nodes_created = execution_summary.counters.relationships_created
+            relationships_of_KG.append(nodes_created)
+        
+        return relationships_of_KG
+
+
+
 
 
 
