@@ -53,9 +53,9 @@ class graphdb_processor():
 
             KG_entity_query, KG_relationship_query  = self.knowledge_graph_query_generator(entity_nodes=entities_with_id,relationship_edges= relationships_with_id)
 
-            #final_kg_overview = self.cypher_query_executor(queries_for_entities=KG_entity_query, queries_for_relationships= KG_relationship_query)
+            final_kg_overview = self.cypher_query_executor(queries_for_entities=KG_entity_query, queries_for_relationships= KG_relationship_query)
 
-            return print(f"Here are the parsed relationships {KG_entity_query}")
+            return print(f"Here are the parsed relationships {final_kg_overview}")
         
         except Exception as e:
             raise(f"error occurred in __run__graphdb_processor__ due to {e}") from e 
@@ -123,7 +123,7 @@ class graphdb_processor():
             Parent_entity_type = i.get("entity_type",[])
 
         parent_entity_info:dict = {
-            "parent_entity_name":Parent_entity_name, 
+            "parent_entity_name":Parent_entity_name,    # NEED TO FIX THE STRUCTURE OF PARENT ENTITY INFO - sample data contains correct structure as sample.
             "parent_entity_type": Parent_entity_type, 
             "content": content_of_chunk,
             "id_of_chunk": id_of_chunk
@@ -228,6 +228,7 @@ class graphdb_processor():
         # Define the lists to store the transformed output
         entities = []
         relationships = []
+        entity_name_id = {}
         
         # Define the regex pattern to check the 
         pattern_entity = re.compile('\("entity"<\|>"(.*?)"<\|>"(.*?)"<\|>"(.*?)"\)')
@@ -238,7 +239,17 @@ class graphdb_processor():
                 entities.append(self._parse_entities(match=entity_match)) 
             elif relationship_match:= pattern_relationship.search(record):
                 relationships.append(self._parse_relationships(match=relationship_match))
+        
+        # Mapping entities with their entity types
+        for entity in entities:
+            entity_type = entity["entity_type"]
+            entity_name = entity["properties"]["entity_name"]
+            entity_name_id[entity_name] = entity_type
 
+        # Assigning types to source and target entities
+        for relat in relationships:
+            relat["source_entity_type"] = entity_name_id[relat['source']]
+            relat["target_entity_type"] = entity_name_id[relat['target']]   
 
         return entities, relationships
 
@@ -257,20 +268,27 @@ class graphdb_processor():
         """
 
         child_entity = entity["properties"]["entity_name"]
-        parent_entity = parent_entity["parent_entity_name"]
+        child_entity_type = entity["entity_type"]
+        parent_entity_type = entity["entity_type"]
+        parent_entity = parent_entity["properties"]["entity_name"]
 
-
-        relationship_edge = {
-                    "source": child_entity,
-                    "target": parent_entity,
-                    "properties": {
-                                    "description": f"{child_entity} is child-entity that belongs to parent-entity {parent_entity}", 
-                                    "category": "Main-theme"
-                                    }
-                            }
+        
+        if child_entity != parent_entity:
+            relationship_edge_generated = {
+                        "source": child_entity,
+                        "target": parent_entity,
+                        "source_entity_type": child_entity_type,
+                        "target_entity_type": parent_entity_type,
+                        "properties": {
+                                        "description": f"{child_entity} is child-entity that belongs to parent-entity {parent_entity}", 
+                                        "category": "Main-theme"
+                                        }
+                                }
         
         # Add to relationship_edges 
-        return relationship_edge
+            return relationship_edge_generated
+        
+        return None
 
 
 
@@ -295,12 +313,17 @@ class graphdb_processor():
             # Add chunk ID for reference in entities and relationships
             entity["properties"]["id_of_chunk"] = parent_entity_node["id_of_chunk"]
             entities_with_ids.append(entity)
+        
+        # Add parent entity details in entity nodes so, it also gets created in knowledge graph.
+        entities_with_ids.append(parent_entity_node)
 
+        
         relationships_with_ids = relationship_edges
-        # Add relationship between parent and child nodes in relationships
+        # Add relationship between parent and child nodes in relationships to object that already contains child entities relationships
         for entity in entity_nodes:
             additional_edge = self._relationship_generator(entity=entity, parent_entity=Parent_entity_info)
-            relationships_with_ids.append(additional_edge)
+            if additional_edge is not None:
+                relationships_with_ids.append(additional_edge)
 
         # Generate ID for relationships
         for relationship in relationships_with_ids:
@@ -338,7 +361,7 @@ class graphdb_processor():
             for entity in entity_nodes:
                 # Entity variables
                 node_type = entity.get("entity_type",[])
-                node_id = entity.get("entity_id",[])
+                node_id = entity.get("entity_id",[]) or entity.get("id_of_chunk",[]) 
                 node_name = entity["properties"]["entity_name"].replace("#","").replace(" ","").replace(".","")
                 
                 entity_name_id[node_name] = node_id
@@ -351,7 +374,7 @@ class graphdb_processor():
 
                 entity_cypher += f" ON CREATE SET {entity_properties} " 
                 entity_cypher_query.append(entity_cypher)
-
+            
 
 
             # Relationships Cypher Query
@@ -361,24 +384,24 @@ class graphdb_processor():
                 # source, target, id, description, keywords,type
                 """
                 Query format:
-                MATCH (s:source {node_id: entity_id})
+                MATCH (s:source_node_type {node_id: entity_id})
                 MATCH (t:target {node_id: entity_id})
                 CREATE (s)-[: BELONGS_TO ]->(t)
                 """
 # Error because Parent node is not present in the entity list so, cannot extract its id.
                 source_node = relationship.get("source",[]).replace("#","").replace(" ","").replace(".","")
                 target_node = relationship.get("target",[]).replace("#","").replace(" ","").replace(".","")
+                source_node_type = relationship.get("source_entity_type",[]).replace("#","").replace(" ","").replace(".","")
+                target_node_type = relationship.get("target_entity_type",[]).replace("#","").replace(" ","").replace(".","")
                 relationship_properties = relationship["properties"]
                 source_node_id = entity_name_id[source_node]
                 target_node_id = entity_name_id[target_node]
                 relationship_properties_extr = ",".join([f"{key}:'{value}'" for key,value in relationship_properties.items()])
 
 
-                relationship_cypher = f"MATCH (s:{source_node} {{node_id:'{source_node_id}'}}) MATCH (t:{target_node} {{node_id:'{target_node_id}'}}) MERGE (s)-[:BELONGS_TO {{{relationship_properties_extr}}}]->(t)"            
+                relationship_cypher = f"MATCH (s:{source_node_type} {{node_id:'{source_node_id}'}}) MATCH (t:{target_node_type} {{node_id:'{target_node_id}'}}) MERGE (s)-[:BELONGS_TO {{{relationship_properties_extr}}}]->(t)"            
                 relationship_cypher_query.append(relationship_cypher)
             
-            # write query
-
 
             return entity_cypher_query, relationship_cypher_query
         
@@ -428,7 +451,7 @@ class graphdb_processor():
             nodes_created = execution_summary.counters.relationships_created
             relationships_of_KG.append(nodes_created)
         
-        return relationships_of_KG
+        return nodes_of_KG
 
 
 
